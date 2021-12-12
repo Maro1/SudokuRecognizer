@@ -5,10 +5,15 @@ import matplotlib.pyplot as plt
 import math
 
 from mnist_model import MNISTModel
+from digit_model import DigitModel
+
+
+from PIL import Image
+import pytesseract
 
 DEBUG = False
 GRID_SIZE = 900
-USE_WEIGHTS = True
+USE_WEIGHTS = False
 
 
 def plot_image(image):
@@ -131,7 +136,7 @@ def find_cells(grid):
     return cells
 
 
-img = cv2.imread('images/sudoku_4.jpg', cv2.IMREAD_GRAYSCALE)
+img = cv2.imread('images/sudoku_2.jpg', cv2.IMREAD_GRAYSCALE)
 sudoku_img = find_grid(img)
 
 sudoku_grid = np.zeros((9, 9))
@@ -139,9 +144,10 @@ cells = find_cells(sudoku_img)
 
 if USE_WEIGHTS:
     model = MNISTModel('model/weights.hdf')
+    model = DigitModel('model/weights.hdf')
 else:
-    model = MNISTModel()
-    model.train()
+    model = DigitModel()
+    model.train(epochs=20)
 
 for i in range(len(cells)):
     cell = cells[i]
@@ -149,6 +155,7 @@ for i in range(len(cells)):
         continue
 
     # Prepare data for trained MNIST model
+    cell = cv2.GaussianBlur(cell, (5, 5), 13)
     cell = cv2.resize(cell, (28, 28))
     cell = cell.astype(np.float32)
     cell /= 255.

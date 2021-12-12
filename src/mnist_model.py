@@ -16,11 +16,13 @@ class MNISTModel:
     def get_model(self) -> keras.models.Sequential:
         model = keras.models.Sequential()
 
-        model.add(keras.layers.Conv2D(28, (3, 3)))
+        model.add(keras.layers.Conv2D(32, (3, 3), activation='relu'))
+        model.add(keras.layers.Conv2D(64, (3, 3), activation='relu'))
         model.add(keras.layers.MaxPooling2D(pool_size=(2, 2)))
+        model.add(keras.layers.Dropout(0.25))
         model.add(keras.layers.Flatten())
         model.add(keras.layers.Dense(128, activation='relu'))
-        model.add(keras.layers.Dropout(0.2))
+        model.add(keras.layers.Dropout(0.5))
         model.add(keras.layers.Dense(10, activation='softmax'))
 
         model.compile(loss='sparse_categorical_crossentropy',
@@ -28,7 +30,7 @@ class MNISTModel:
 
         return model
 
-    def train(self, epochs=10) -> None:
+    def train(self, epochs=20) -> None:
         (ds_train, ds_test), ds_info = tfds.load(
             'mnist',
             split=['train', 'test'],
