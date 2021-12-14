@@ -6,6 +6,7 @@ import math
 
 from mnist_model import MNISTModel
 from digit_model import DigitModel
+import sudoku_solver
 
 
 from PIL import Image
@@ -13,7 +14,7 @@ import pytesseract
 
 DEBUG = False
 GRID_SIZE = 900
-USE_WEIGHTS = False
+USE_WEIGHTS = True
 
 
 def plot_image(image):
@@ -136,7 +137,7 @@ def find_cells(grid):
     return cells
 
 
-img = cv2.imread('images/sudoku_2.jpg', cv2.IMREAD_GRAYSCALE)
+img = cv2.imread('images/sudoku_3.jpg', cv2.IMREAD_GRAYSCALE)
 sudoku_img = find_grid(img)
 
 sudoku_grid = np.zeros((9, 9))
@@ -163,5 +164,6 @@ for i in range(len(cells)):
     number = model.classify_number(cell)
     sudoku_grid[math.floor(i / 9), i % 9] = number
 
+sudoku_solver.solve(sudoku_grid)
 print(sudoku_grid)
 plot_image(img)
