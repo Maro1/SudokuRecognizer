@@ -9,9 +9,6 @@ from digit_model import DigitModel
 import sudoku_solver
 
 
-from PIL import Image
-import pytesseract
-
 DEBUG = False
 GRID_SIZE = 900
 USE_WEIGHTS = True
@@ -37,10 +34,13 @@ def transform_grid(image, corners, grid_size=GRID_SIZE):
     perspective_mat = cv2.getPerspectiveTransform(
         np.array(corners, dtype=np.float32), dst_points)
 
+    # For use when projecting numbers back onto image
+    inv_perspective = np.linalg.inv(perspective_mat)
+
     warped = cv2.warpPerspective(
         image, perspective_mat, (grid_size, grid_size))
 
-    return warped
+    return warped, inv_perspective
 
 
 def find_sudoku_corners(image):
@@ -79,9 +79,9 @@ def find_grid(sudoku_img):
         cv2.drawContours(
             sudoku_img, [contour_corners], -1, (255, 0, 0), thickness=5)
 
-    transformed = transform_grid(sudoku_img, contour_corners)
+    transformed, inv_perspective = transform_grid(sudoku_img, contour_corners)
 
-    return transformed
+    return transformed, inv_perspective
 
 
 def find_cells(grid):
@@ -138,7 +138,7 @@ def find_cells(grid):
 
 
 img = cv2.imread('images/sudoku_3.jpg', cv2.IMREAD_GRAYSCALE)
-sudoku_img = find_grid(img)
+sudoku_img, inv_perspective = find_grid(img)
 
 sudoku_grid = np.zeros((9, 9))
 cells = find_cells(sudoku_img)
@@ -164,6 +164,24 @@ for i in range(len(cells)):
     number = model.classify_number(cell)
     sudoku_grid[math.floor(i / 9), i % 9] = number
 
-sudoku_solver.solve(sudoku_grid)
-print(sudoku_grid)
-plot_image(img)
+solved_grid = sudoku_grid.copy()
+sudoku_solver.solve(solved_grid)
+
+cell_size = int(GRID_SIZE / 9)
+for i in range(9):
+    for j in range(9):
+        if sudoku_grid[i, j] == 0:
+            x = int(j * cell_size + 0.3 * cell_size)
+            y = int(i * cell_size + 0.8 * cell_size)
+
+            vec = np.array([x, y, 1])
+            vec = np.matmul(inv_perspective, vec)
+
+            # x = round(vec[0])
+            # y = round(vec[1])
+
+            cv2.putText(sudoku_img, str(
+                int(solved_grid[i, j])), (x, y), cv2.FONT_HERSHEY_COMPLEX, 2, (255, 0, 0))
+
+print(solved_grid)
+plot_image(sudoku_img)
