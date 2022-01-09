@@ -54,15 +54,15 @@ class DigitModel:
                 self.model.save_weights('model/weights.hdf')
 
         self.model.summary()
-        self.model.evaluate((X_test, y_test))
+        self.model.evaluate(x=X_test, y=y_test)
 
     def classify_number(self, img) -> np.ndarray:
         """
         Generates the given amount of sequences
         """
-        img = np.reshape(img, (1, 28, 28))
+        img = np.reshape(img, (img.shape[0], 28, 28, 1))
         result = self.model.predict(img)
-        result = np.argmax(result)
+        result = [np.argmax(x) for x in result]
 
         return result
 

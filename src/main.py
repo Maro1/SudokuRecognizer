@@ -3,16 +3,14 @@ import cv2
 import matplotlib.pyplot as plt
 
 import math
+import os
 
-from mnist_model import MNISTModel
 from digit_model import DigitModel
 import sudoku_solver
 
 
 DEBUG = False
 GRID_SIZE = 900
-USE_WEIGHTS = True
-
 
 def plot_image(image):
     """
@@ -52,7 +50,7 @@ def find_sudoku_corners(image):
     contours, _ = cv2.findContours(
         image, cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE)
 
-    # Find second largest contour and find approximate it as rectangle
+    # Find second largest contour and approximate it as rectangle
     contour = sorted(contours, key=lambda c: -cv2.contourArea(c))[1]
     contour = cv2.approxPolyDP(
         contour, 0.01*cv2.arcLength(contour, True), True)
@@ -136,52 +134,154 @@ def find_cells(grid):
 
     return cells
 
+def get_model() -> DigitModel:
+    """
+    Loads model from weights if they exists,
+    otherwise trains model
+    """
+    if os.path.exists(os.path.join(os.getcwd(), 'model/checkpoint')):
+        model = DigitModel('model/weights.hdf')
+    else:
+        model = DigitModel()
+        model.train(epochs=100)
 
-img = cv2.imread('images/sudoku_3.jpg', cv2.IMREAD_GRAYSCALE)
-sudoku_img, inv_perspective = find_grid(img)
+    return model
 
-sudoku_grid = np.zeros((9, 9))
-cells = find_cells(sudoku_img)
+def classify_grid(model: DigitModel, cells: list) -> np.ndarray:
+    """
+    Iterates over each cell in grid and classifies digit if non empty
+    """
 
-if USE_WEIGHTS:
-    model = MNISTModel('model/weights.hdf')
-    model = DigitModel('model/weights.hdf')
-else:
-    model = DigitModel()
-    model.train(epochs=20)
+    # TODO: Classify all numbers at once to improve performance
+    sudoku_grid = np.zeros((9, 9))
 
-for i in range(len(cells)):
-    cell = cells[i]
-    if cell is None:
-        continue
+    to_classifiy = []
+    idx_dict = {}
+    idx = 0
 
-    # Prepare data for trained MNIST model
-    cell = cv2.GaussianBlur(cell, (5, 5), 13)
-    cell = cv2.resize(cell, (28, 28))
-    cell = cell.astype(np.float32)
-    cell /= 255.
+    for i in range(len(cells)):
+        cell = cells[i]
 
-    number = model.classify_number(cell)
-    sudoku_grid[math.floor(i / 9), i % 9] = number
+        # No need to classify empty cells
+        if cell is None:
+            continue
 
-solved_grid = sudoku_grid.copy()
-sudoku_solver.solve(solved_grid)
+        # Prepare data for trained model
+        cell = cv2.GaussianBlur(cell, (5, 5), 13) # De-noise with Gaussian blur
+        cell = cv2.resize(cell, (28, 28)) # Resize image to same as dataset used to train model
+        cell = cell.astype(np.float32) # Use float type
+        cell /= 255. # Divide by 255 to get float between 0 and 1
 
-cell_size = int(GRID_SIZE / 9)
-for i in range(9):
-    for j in range(9):
-        if sudoku_grid[i, j] == 0:
-            x = int(j * cell_size + 0.3 * cell_size)
-            y = int(i * cell_size + 0.8 * cell_size)
+        to_classifiy.append(cell)
+        idx_dict[idx] = math.floor(i / 9), i % 9
+        idx += 1
 
-            vec = np.array([x, y, 1])
-            vec = np.matmul(inv_perspective, vec)
+    numbers = model.classify_number(np.asarray(to_classifiy))
 
-            # x = round(vec[0])
-            # y = round(vec[1])
+    for i in range(len(numbers)):
+        sudoku_grid[idx_dict[i]] = numbers[i] # Update sudoku grid with classified number
+    
+    return sudoku_grid
 
-            cv2.putText(sudoku_img, str(
-                int(solved_grid[i, j])), (x, y), cv2.FONT_HERSHEY_COMPLEX, 2, (255, 0, 0))
+def project_solution(img: np.ndarray, sudoku_grid: np.ndarray, solved_grid: np.ndarray, inv_perspective: np.ndarray) -> np.ndarray:
+    """
+    Projects solved sudoku digits onto image using inverse perspective projection
+    """
 
-print(solved_grid)
-plot_image(sudoku_img)
+    # Convert to BGR to project digits in color
+    img = cv2.cvtColor(img, cv2.COLOR_GRAY2BGR) 
+    
+    # Init solution image and cell size
+    cell_size = int(GRID_SIZE / 9)
+    solution = np.zeros((GRID_SIZE, GRID_SIZE, 3), dtype=np.uint8)
+
+    for i in range(9):
+        for j in range(9):
+            if sudoku_grid[i, j] == 0:
+                # Find x and y for text based on cell location
+                x = int(j * cell_size + 0.3 * cell_size)
+                y = int(i * cell_size + 0.8 * cell_size)
+
+                cv2.putText(solution, str(
+                    int(solved_grid[i, j])), (x, y), cv2.FONT_HERSHEY_COMPLEX, 2, (255, 255, 100))
+
+    # Apply inverse perspective homography to get digits in original image space
+    solution = cv2.warpPerspective(solution, inv_perspective, (img.shape[1], img.shape[0]))
+
+    # Since all non-digit pixels of solution are 0, subtract can be used to overlay
+    return cv2.subtract(img, solution)
+
+def run():
+    model = get_model()
+
+    img = cv2.imread('images/sudoku_5.jpg', cv2.IMREAD_GRAYSCALE)
+    sudoku_img, inv_perspective = find_grid(img)
+
+    cells = find_cells(sudoku_img)
+
+    sudoku_grid = classify_grid(model, cells)
+
+    # Copy grid to only overlay solved digits later
+    solved_grid = sudoku_grid.copy()
+    sudoku_solver.solve(solved_grid)
+
+    to_present = project_solution(img, sudoku_grid, solved_grid, inv_perspective)
+    plot_image(to_present)
+
+def run_video():
+    model = get_model()
+
+    cap = cv2.VideoCapture('images/Sudoku2.mp4')
+
+    first_sudoku = 0
+    prev_solved_grid = None
+    prev_sudoku_grid = None
+    while cap.isOpened():
+        ret, img = cap.read()
+
+        if not ret:
+            break
+
+        img = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+
+        try:
+            sudoku_img, inv_perspective = find_grid(img)
+            cells = find_cells(sudoku_img)
+        except Exception as e:
+            first_sudoku = False
+            cv2.imshow('frame', cv2.resize(img, (500, 900)))
+            if cv2.waitKey(1) == ord('q'):
+                break
+            continue
+
+        if not first_sudoku:
+            first_sudoku = True
+            sudoku_grid = classify_grid(model, cells)
+
+            if sudoku_solver.valid(sudoku_grid):
+                # Copy grid to only overlay solved digits later
+                solved_grid = sudoku_grid.copy()
+                sudoku_solver.solve(solved_grid)
+
+                if solved_grid.all():
+                    prev_sudoku_grid = sudoku_grid
+                    prev_solved_grid = solved_grid
+
+        if prev_solved_grid is not None:
+            to_present = project_solution(img, prev_sudoku_grid, prev_solved_grid, inv_perspective)
+            cv2.imshow('frame', cv2.resize(to_present, (500, 900)))
+
+        else:
+            cv2.imshow('frame', cv2.resize(img, (500, 900)))
+
+        if cv2.waitKey(1) == ord('q'):
+            break
+
+    cap.release()
+    cv2.destroyAllWindows()
+
+
+if __name__ == '__main__':
+    #import cProfile
+    #cProfile.run('run_video()', 'restats')
+    run_video()

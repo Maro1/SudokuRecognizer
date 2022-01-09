@@ -1,6 +1,7 @@
 import cv2
 import numpy as np
 
+url = 'http://10.0.0.10:8080/shot.jpg?rnd=296433'
 cp = cv2.VideoCapture(url)
 
 while(True):

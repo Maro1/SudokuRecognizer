@@ -1,6 +1,8 @@
 import numpy as np
 import math
 
+from numpy.core.fromnumeric import nonzero
+
 
 def solve(grid: np.ndarray, pos: tuple = (0, 0)) -> bool:
     while grid[pos[0], pos[1]] != 0:
@@ -45,3 +47,25 @@ def next_pos(pos: tuple):
         return (pos[0] + 1, 0)
     else:
         return None
+
+def _nonzero(x):
+    return [n for n in x if n != 0]
+
+def valid(grid: np.ndarray):
+    for i in range(9):
+        for j in range(9):
+            if grid[i, j] == 0:
+                continue
+
+            if len(set(_nonzero(grid[i, :]))) != len(_nonzero(grid[i, :])):
+                return False
+            if len(set(_nonzero(grid[:, j]))) != len(_nonzero(grid[:, j])):
+                return False
+
+            box_x = 3 * math.floor(j / 3)
+            box_y = 3 * math.floor(i / 3)
+            if len(set(_nonzero(grid[box_y:box_y + 3, box_x:box_x + 3].ravel()))) != len(_nonzero(grid[box_y:box_y + 3, box_x:box_x + 3].ravel())):
+                return False
+
+    return True
+

@@ -1,4 +1,6 @@
 opencv-python
+matplotlib
+scikit-learn
 numpy
-tensorflow
+tensorflow==2.5.0rc3
 tensorflow_datasets
