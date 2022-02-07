@@ -26,7 +26,8 @@ class MNISTModel:
         model.add(keras.layers.Dense(10, activation='softmax'))
 
         model.compile(loss='sparse_categorical_crossentropy',
-                      optimizer='adam', metrics=['sparse_categorical_accuracy'])
+                      optimizer='adam',
+                      metrics=['sparse_categorical_accuracy'])
 
         return model
 

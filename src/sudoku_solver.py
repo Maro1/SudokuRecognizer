@@ -1,21 +1,18 @@
 import numpy as np
 import math
 
-from numpy.core.fromnumeric import nonzero
-
 
 def solve(grid: np.ndarray, pos: tuple = (0, 0)) -> bool:
     while grid[pos[0], pos[1]] != 0:
         pos = next_pos(pos)
-        if pos == None:
+        if pos is None:
             return True
 
-    found_valid = False
     for num in range(1, 10):
         if valid_num(grid, pos, num):
             grid[pos[0], pos[1]] = num
 
-            if next_pos(pos) == None:
+            if next_pos(pos) is None:
                 return True
 
             if solve(grid, next_pos(pos)):
@@ -48,8 +45,10 @@ def next_pos(pos: tuple):
     else:
         return None
 
+
 def _nonzero(x):
     return [n for n in x if n != 0]
+
 
 def valid(grid: np.ndarray):
     for i in range(9):
@@ -68,4 +67,3 @@ def valid(grid: np.ndarray):
                 return False
 
     return True
-

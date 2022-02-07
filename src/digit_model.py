@@ -1,11 +1,11 @@
 import numpy as np
+
 import cv2
+
 import tensorflow as tf
 import tensorflow.keras as keras
-import tensorflow_datasets as tfds
 
 from sklearn.model_selection import train_test_split
-from tensorflow.keras.utils import to_categorical
 
 import os
 
@@ -13,6 +13,7 @@ import os
 class DigitModel:
 
     def __init__(self, weights: str = None):
+        tf.compat.v1.disable_eager_execution()
         self.model = self.get_model()
         if weights:
             self.model.load_weights(weights)
@@ -32,7 +33,8 @@ class DigitModel:
         model.add(keras.layers.Dense(10, activation='softmax'))
 
         model.compile(loss='sparse_categorical_crossentropy',
-                      optimizer='adam', metrics=['sparse_categorical_accuracy'])
+                      optimizer='adam',
+                      metrics=['sparse_categorical_accuracy'])
 
         return model
 

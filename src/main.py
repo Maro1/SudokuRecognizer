@@ -8,11 +8,10 @@ import os
 from digit_model import DigitModel
 import sudoku_solver
 
-
-DEBUG = False
 GRID_SIZE = 900
 
-def plot_image(image):
+
+def plot_image(image: np.ndarray):
     """
     Plots a single image
     """
@@ -20,14 +19,17 @@ def plot_image(image):
     plt.show()
 
 
-def transform_grid(image, corners, grid_size=GRID_SIZE):
+def transform_grid(image: np.ndarray, corners: np.ndarray,
+                   grid_size: int = GRID_SIZE) -> tuple:
     """
     Transforms image grid points to standardized grid
     using inverse perspective projection
     """
 
+    # Destination points in clockwise order from top-left corner
     dst_points = np.array(
-        [[grid_size, 0],   [grid_size, grid_size],  [0, grid_size], [0, 0]], dtype=np.float32)
+        [[0, 0],   [grid_size, 0],  [grid_size, grid_size], [0, grid_size]],
+        dtype=np.float32)
 
     perspective_mat = cv2.getPerspectiveTransform(
         np.array(corners, dtype=np.float32), dst_points)
@@ -41,103 +43,145 @@ def transform_grid(image, corners, grid_size=GRID_SIZE):
     return warped, inv_perspective
 
 
-def find_sudoku_corners(image):
+def sort_contour(contour: np.ndarray) -> np.ndarray:
+    """
+    Sorts 4 corner contour in clockwise order from top-left corner
+    """
+
+    # OpenCV contours have one redundant dimension, using only 2 for
+    # easier sorting
+    new_contour = []
+    for c in contour:
+        new_contour.append(c[0])
+    new_contour = np.array(new_contour)
+
+    # Find the center of the contour
+    center_x = sum([x[0] for x in new_contour]) / len(new_contour)
+    center_y = sum([x[1] for x in new_contour]) / len(new_contour)
+
+    # Sort contour points in clockwise order starting with top-left corner
+    for c in contour:
+        point = c[0]
+        if point[0] < center_x and point[1] < center_y:
+            new_contour[0] = point
+        elif point[0] > center_x and point[1] < center_y:
+            new_contour[1] = point
+        elif point[0] > center_x and point[1] > center_y:
+            new_contour[2] = point
+        elif point[0] < center_x and point[1] > center_y:
+            new_contour[3] = point
+
+    # Convert back to OpenCV contour format
+    contour = np.array([[x] for x in new_contour])
+    return contour
+
+
+def find_sudoku_corners(image: np.ndarray) -> np.ndarray:
     """
     Finds the four corners of sudoku grid using contours
     """
 
     # Finds contours in binary image using Suzuki85
-    contours, _ = cv2.findContours(
+    contours, hierarchy = cv2.findContours(
         image, cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE)
 
-    # Find second largest contour and approximate it as rectangle
+    # If less than the grid size of sudoku contours are found,
+    # there is no sudoku board
+    if len(contours) < 9 * 9:
+        return None
+
+    # Find second largest contour which should be the outermost
+    # contour of sudoku board
     contour = sorted(contours, key=lambda c: -cv2.contourArea(c))[1]
+
+    # The following code iterates through the contour hierarchy
+    # and checks that the contour has 9 children
+    i = 0
+    for c in contours:
+        if np.array_equal(c, contour):
+            node = hierarchy[0][i]
+            child = hierarchy[0][node[2]]
+            num_children = 1
+            while child[0] > 0:
+                child = hierarchy[0][child[0]]
+
+                num_children += 1
+
+            if num_children != 9:
+                return None
+            break
+        i += 1
+
+    # The contour is approximated as a rectangle
     contour = cv2.approxPolyDP(
         contour, 0.01*cv2.arcLength(contour, True), True)
 
+    contour = sort_contour(contour)
     return contour
 
 
-def find_grid(sudoku_img):
+def find_grid(sudoku_img: np.ndarray) -> tuple:
     """
     Finds standardized sudoku grid from input image
     """
 
-    # Convert to grayscale and de-noise
-    grayscale_img = cv2.GaussianBlur(sudoku_img, (7, 7), 3)
+    # Apply gaussian filter to de-noise
+    blurred_img = cv2.GaussianBlur(sudoku_img, (7, 7), 3)
 
     # Use adaptive threshholding to better handle varying lighting in image
-    #! NOTE: Instead of 11, 2, make it depend on image resolution?
     thresh = cv2.adaptiveThreshold(
-        grayscale_img, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY, 11, 2)
+        blurred_img, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
+        cv2.THRESH_BINARY, 7, 2)
 
     contour_corners = find_sudoku_corners(thresh)
 
-    if DEBUG:
-        cv2.drawContours(
-            sudoku_img, [contour_corners], -1, (255, 0, 0), thickness=5)
+    if contour_corners is None:
+        return None, None
 
     transformed, inv_perspective = transform_grid(sudoku_img, contour_corners)
 
     return transformed, inv_perspective
 
 
-def find_cells(grid):
-    cell_size = int(GRID_SIZE / 9)
-    offset = 12
+def find_cells(grid: np.ndarray) -> list:
+    """
+    Finds the individual cells of the transformed sudoku images
+    and returns them as a list
+    """
     cells = []
 
+    # Split the image into 9 rows
     row = np.vsplit(grid, 9)
 
     for col in row:
+
+        # Split the row into 9 columns
         col_cells = np.hsplit(col, 9)
 
         for cell in col_cells:
+
+            # Apply a binary threshold using Otsu's to the cell
             _, cell = cv2.threshold(
                 cell, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
 
+            # Invert cell and take only central part to exclude edges
             cell = ~cell[15:85, 15:85]
 
+            # If too many or too few pixels are non-zero, add empty cell
+            if np.count_nonzero(cell) > cell.size / 2:
+                return None
             if np.count_nonzero(cell) < 5:
                 cells.append(None)
             else:
-                contours, _ = cv2.findContours(
-                    cell, cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE)
-                contour = max(contours, key=lambda c: cv2.contourArea(c))
-
-                min_x = cell_size
-                min_y = cell_size
-                max_x = 0
-                max_y = 0
-                for p in contour:
-                    if p[0][0] > max_x:
-                        max_x = p[0][0]
-                    if p[0][0] < min_x:
-                        min_x = p[0][0]
-                    if p[0][1] > max_y:
-                        max_y = p[0][1]
-                    if p[0][1] < min_y:
-                        min_y = p[0][1]
-
-                cell = cell[min_y:max_y, min_x:max_x]
-
-                y = max_y - min_y
-                x = max_x - min_x
-                size = y + int(y * 0.3) + (y + int(y * 0.3)) % 2
-                padding_y = int((size - y) / 2)
-                padding_x = int((size - x) / 2)
-
-                cell = cv2.copyMakeBorder(
-                    cell, padding_y, padding_y, padding_x, padding_x, cv2.BORDER_CONSTANT, value=0)
-
                 cells.append(cell)
 
     return cells
 
+
 def get_model() -> DigitModel:
     """
     Loads model from weights if they exists,
-    otherwise trains model
+    otherwise train model
     """
     if os.path.exists(os.path.join(os.getcwd(), 'model/checkpoint')):
         model = DigitModel('model/weights.hdf')
@@ -147,12 +191,12 @@ def get_model() -> DigitModel:
 
     return model
 
+
 def classify_grid(model: DigitModel, cells: list) -> np.ndarray:
     """
     Iterates over each cell in grid and classifies digit if non empty
     """
 
-    # TODO: Classify all numbers at once to improve performance
     sudoku_grid = np.zeros((9, 9))
 
     to_classifiy = []
@@ -167,10 +211,12 @@ def classify_grid(model: DigitModel, cells: list) -> np.ndarray:
             continue
 
         # Prepare data for trained model
-        cell = cv2.GaussianBlur(cell, (5, 5), 13) # De-noise with Gaussian blur
-        cell = cv2.resize(cell, (28, 28)) # Resize image to same as dataset used to train model
-        cell = cell.astype(np.float32) # Use float type
-        cell /= 255. # Divide by 255 to get float between 0 and 1
+        # De-noise with Gaussian blur
+        cell = cv2.GaussianBlur(cell, (5, 5), 13)
+        # Resize image to same as dataset used to train model
+        cell = cv2.resize(cell, (28, 28))
+        cell = cell.astype(np.float32)  # Use float type
+        cell /= 255.  # Divide by 255 to get float between 0 and 1
 
         to_classifiy.append(cell)
         idx_dict[idx] = math.floor(i / 9), i % 9
@@ -179,18 +225,20 @@ def classify_grid(model: DigitModel, cells: list) -> np.ndarray:
     numbers = model.classify_number(np.asarray(to_classifiy))
 
     for i in range(len(numbers)):
-        sudoku_grid[idx_dict[i]] = numbers[i] # Update sudoku grid with classified number
-    
+        # Update sudoku grid with classified number
+        sudoku_grid[idx_dict[i]] = numbers[i]
+
     return sudoku_grid
 
-def project_solution(img: np.ndarray, sudoku_grid: np.ndarray, solved_grid: np.ndarray, inv_perspective: np.ndarray) -> np.ndarray:
+
+def project_solution(img: np.ndarray, sudoku_grid: np.ndarray,
+                     solved_grid: np.ndarray,
+                     inv_perspective: np.ndarray) -> np.ndarray:
     """
-    Projects solved sudoku digits onto image using inverse perspective projection
+    Projects solved sudoku digits onto image using 
+    inverse perspective projection
     """
 
-    # Convert to BGR to project digits in color
-    img = cv2.cvtColor(img, cv2.COLOR_GRAY2BGR) 
-    
     # Init solution image and cell size
     cell_size = int(GRID_SIZE / 9)
     solution = np.zeros((GRID_SIZE, GRID_SIZE, 3), dtype=np.uint8)
@@ -203,85 +251,145 @@ def project_solution(img: np.ndarray, sudoku_grid: np.ndarray, solved_grid: np.n
                 y = int(i * cell_size + 0.8 * cell_size)
 
                 cv2.putText(solution, str(
-                    int(solved_grid[i, j])), (x, y), cv2.FONT_HERSHEY_COMPLEX, 2, (255, 255, 100))
+                    int(solved_grid[i, j])), (x, y), cv2.FONT_HERSHEY_COMPLEX,
+                    2, (255, 255, 100))
 
-    # Apply inverse perspective homography to get digits in original image space
-    solution = cv2.warpPerspective(solution, inv_perspective, (img.shape[1], img.shape[0]))
+    # Apply inverse perspective homography to get digits in
+    # original image space
+    solution = cv2.warpPerspective(
+        solution, inv_perspective, (img.shape[1], img.shape[0]))
 
-    # Since all non-digit pixels of solution are 0, subtract can be used to overlay
+    # Since all non-digit pixels of solution are 0, subtract
+    # can be used to overlay
     return cv2.subtract(img, solution)
 
-def run():
+
+def run(path: str):
     model = get_model()
 
-    img = cv2.imread('images/sudoku_5.jpg', cv2.IMREAD_GRAYSCALE)
-    sudoku_img, inv_perspective = find_grid(img)
+    img = cv2.imread('captured.jpg', cv2.IMREAD_COLOR)
+    gray_img = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+
+    img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+
+    sudoku_img, inv_perspective = find_grid(gray_img)
+
+    if sudoku_img is None:
+        plot_image(img)
+        return
 
     cells = find_cells(sudoku_img)
+    if cells is None:
+        plot_image(img)
+        return
 
     sudoku_grid = classify_grid(model, cells)
 
     # Copy grid to only overlay solved digits later
     solved_grid = sudoku_grid.copy()
-    sudoku_solver.solve(solved_grid)
+    if sudoku_solver.valid(solved_grid):
+        sudoku_solver.solve(solved_grid)
 
-    to_present = project_solution(img, sudoku_grid, solved_grid, inv_perspective)
-    plot_image(to_present)
+        to_present = project_solution(
+            img, sudoku_grid, solved_grid, inv_perspective)
+        plot_image(to_present)
+    else:
+        plot_image(img)
 
-def run_video():
+
+def run_video(path: str, save=False):
     model = get_model()
 
-    cap = cv2.VideoCapture('images/Sudoku2.mp4')
+    cap = cv2.VideoCapture(path)
 
-    first_sudoku = 0
-    prev_solved_grid = None
-    prev_sudoku_grid = None
+    solved_grid = None
+
+    if save:
+        img_list = []
+
     while cap.isOpened():
         ret, img = cap.read()
 
         if not ret:
             break
 
-        img = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+        if cv2.waitKey(1) == ord('q'):
+            cv2.imwrite('captured.jpg', img)
+            break
 
-        try:
-            sudoku_img, inv_perspective = find_grid(img)
-            cells = find_cells(sudoku_img)
-        except Exception as e:
-            first_sudoku = False
+        if save:
+            img_list.append(img)
+
+        gray_img = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+
+        sudoku_img, inv_perspective = find_grid(gray_img)
+        if sudoku_img is None:
+            solved_grid = None
             cv2.imshow('frame', cv2.resize(img, (500, 900)))
-            if cv2.waitKey(1) == ord('q'):
-                break
             continue
 
-        if not first_sudoku:
-            first_sudoku = True
-            sudoku_grid = classify_grid(model, cells)
+        cells = find_cells(sudoku_img)
+        if cells is None:
+            solved_grid = None
+            cv2.imshow('frame', cv2.resize(img, (500, 900)))
+            continue
 
-            if sudoku_solver.valid(sudoku_grid):
+        sudoku_grid = classify_grid(model, cells)
+
+        if sudoku_solver.valid(sudoku_grid):
+            if solved_grid is None:
                 # Copy grid to only overlay solved digits later
                 solved_grid = sudoku_grid.copy()
                 sudoku_solver.solve(solved_grid)
 
-                if solved_grid.all():
-                    prev_sudoku_grid = sudoku_grid
-                    prev_solved_grid = solved_grid
+            if solved_grid.all():
+                to_present = project_solution(
+                    img, sudoku_grid, solved_grid, inv_perspective)
+                cv2.imshow('frame', cv2.resize(to_present, (500, 900)))
 
-        if prev_solved_grid is not None:
-            to_present = project_solution(img, prev_sudoku_grid, prev_solved_grid, inv_perspective)
-            cv2.imshow('frame', cv2.resize(to_present, (500, 900)))
+                if save:
+                    img_list[-1] = to_present
+                continue
 
-        else:
-            cv2.imshow('frame', cv2.resize(img, (500, 900)))
-
-        if cv2.waitKey(1) == ord('q'):
-            break
+        cv2.imshow('frame', cv2.resize(img, (500, 900)))
 
     cap.release()
     cv2.destroyAllWindows()
 
+    if save:
+        out = cv2.VideoWriter(
+            'produced_video.mp4', cv2.VideoWriter_fourcc(*'mp4v'),
+            30, (1080, 1920))
+
+        for i in range(len(img_list)):
+            out.write(img_list[i])
+
+        out.release()
+
 
 if __name__ == '__main__':
-    #import cProfile
-    #cProfile.run('run_video()', 'restats')
-    run_video()
+    print('-------- SudokuRecognizer --------')
+    print('1. Run on image')
+    print('2. Run on video')
+    choice = input('Please choose an option: ')
+    try:
+        choice = int(choice)
+        if choice < 1 or choice > 2:
+            raise Exception()
+    except Exception:
+        print('Unknown option, exiting...')
+        exit(-1)
+
+    if choice == 1:
+        path = input('Please enter image path: ')
+        if not os.path.exists(path):
+            print('Unknown path, exiting...')
+            exit(-1)
+        run(path)
+
+    elif choice == 2:
+        path = input('Please enter video path: ')
+        if not os.path.exists(path):
+            print('Unknown path, exiting...')
+            exit(-1)
+        run_video(path, False)
