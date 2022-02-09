@@ -1,2 +1,2 @@
-model_checkpoint_path: "weights.hdf"
-all_model_checkpoint_paths: "weights.hdf"
+model_checkpoint_path: "checkpoint"
+all_model_checkpoint_paths: "checkpoint"

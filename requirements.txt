@@ -3,4 +3,3 @@ matplotlib
 scikit-learn
 numpy
 tensorflow
-tensorflow_datasets

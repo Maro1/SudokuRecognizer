@@ -15,7 +15,7 @@ def plot_image(image: np.ndarray):
     """
     Plots a single image
     """
-    plt.imshow(image, cmap='gray')
+    plt.imshow(cv2.cvtColor(image, cv2.COLOR_BGR2RGB), cmap='gray')
     plt.show()
 
 
@@ -35,7 +35,10 @@ def transform_grid(image: np.ndarray, corners: np.ndarray,
         np.array(corners, dtype=np.float32), dst_points)
 
     # For use when projecting numbers back onto image
-    inv_perspective = np.linalg.inv(perspective_mat)
+    try:
+        inv_perspective = np.linalg.inv(perspective_mat)
+    except Exception:
+        return None, None
 
     warped = cv2.warpPerspective(
         image, perspective_mat, (grid_size, grid_size))
@@ -94,27 +97,12 @@ def find_sudoku_corners(image: np.ndarray) -> np.ndarray:
     # contour of sudoku board
     contour = sorted(contours, key=lambda c: -cv2.contourArea(c))[1]
 
-    # The following code iterates through the contour hierarchy
-    # and checks that the contour has 9 children
-    i = 0
-    for c in contours:
-        if np.array_equal(c, contour):
-            node = hierarchy[0][i]
-            child = hierarchy[0][node[2]]
-            num_children = 1
-            while child[0] > 0:
-                child = hierarchy[0][child[0]]
-
-                num_children += 1
-
-            if num_children != 9:
-                return None
-            break
-        i += 1
-
     # The contour is approximated as a rectangle
     contour = cv2.approxPolyDP(
         contour, 0.01*cv2.arcLength(contour, True), True)
+
+    if len(contour) != 4:
+        return None
 
     contour = sort_contour(contour)
     return contour
@@ -139,6 +127,8 @@ def find_grid(sudoku_img: np.ndarray) -> tuple:
         return None, None
 
     transformed, inv_perspective = transform_grid(sudoku_img, contour_corners)
+    if transformed is None:
+        return None, None
 
     return transformed, inv_perspective
 
@@ -184,7 +174,7 @@ def get_model() -> DigitModel:
     otherwise train model
     """
     if os.path.exists(os.path.join(os.getcwd(), 'model/checkpoint')):
-        model = DigitModel('model/weights.hdf')
+        model = DigitModel('model/checkpoint')
     else:
         model = DigitModel()
         model.train(epochs=100)
@@ -221,6 +211,9 @@ def classify_grid(model: DigitModel, cells: list) -> np.ndarray:
         to_classifiy.append(cell)
         idx_dict[idx] = math.floor(i / 9), i % 9
         idx += 1
+
+    if not to_classifiy:
+        return None
 
     numbers = model.classify_number(np.asarray(to_classifiy))
 
@@ -265,15 +258,18 @@ def project_solution(img: np.ndarray, sudoku_grid: np.ndarray,
 
 
 def run(path: str):
+    # Digit classifier model
     model = get_model()
 
-    img = cv2.imread('captured.jpg', cv2.IMREAD_COLOR)
+    # Get image both in RGB and grayscale
+    img = cv2.imread(path, cv2.IMREAD_COLOR)
     gray_img = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
 
-    img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
-
+    # Get sudoku grid image along with inverse
+    # perspective transformation
     sudoku_img, inv_perspective = find_grid(gray_img)
 
+    # If not found, plot original image
     if sudoku_img is None:
         plot_image(img)
         return
@@ -284,6 +280,9 @@ def run(path: str):
         return
 
     sudoku_grid = classify_grid(model, cells)
+    if sudoku_grid is None:
+        plot_image(img)
+        return
 
     # Copy grid to only overlay solved digits later
     solved_grid = sudoku_grid.copy()
@@ -302,8 +301,11 @@ def run_video(path: str, save=False):
 
     cap = cv2.VideoCapture(path)
 
+    # Keep track of solved grid to not have to
+    # solve each frame
     solved_grid = None
 
+    # If saving video, create image list
     if save:
         img_list = []
 
@@ -314,7 +316,6 @@ def run_video(path: str, save=False):
             break
 
         if cv2.waitKey(1) == ord('q'):
-            cv2.imwrite('captured.jpg', img)
             break
 
         if save:
@@ -335,6 +336,10 @@ def run_video(path: str, save=False):
             continue
 
         sudoku_grid = classify_grid(model, cells)
+        if sudoku_grid is None:
+            solved_grid = None
+            cv2.imshow('frame', cv2.resize(img, (500, 900)))
+            continue
 
         if sudoku_solver.valid(sudoku_grid):
             if solved_grid is None:
@@ -356,6 +361,7 @@ def run_video(path: str, save=False):
     cap.release()
     cv2.destroyAllWindows()
 
+    # Save video
     if save:
         out = cv2.VideoWriter(
             'produced_video.mp4', cv2.VideoWriter_fourcc(*'mp4v'),
